@@ -208,6 +208,10 @@ sumtable(acs_election_reduced[4:25], add.median = TRUE)
 ```
 
 ```{r correlation and variance}
+
+# Set the API key for accessing the Census API
+census_api_key("")
+
 # Define a vector of predictor variables to analyze
 predictors <- c(
   "total_populationE",
@@ -238,13 +242,21 @@ predictors <- c(
 correlation_matrix <- cor(acs_election_reduced[, predictors], use = "complete.obs")
 
 # Visualize the correlation matrix using ggcorrplot with custom labels and themes
-ggcorrplot(correlation_matrix, 
-           ggtheme = ggplot2::theme_bw(),
-           legend.title = "Correlation") + 
-  scale_y_discrete(labels = c("Population","Age","Income","College","White","Hispanic","Black","Asian","Extraction",
-"Cnstruction", "Manufacturing", "Wholesale", "Logistics", "Financial", "Professional", "Education", "Service", "Information", "Retail", "Poverty", "Male Hours", "Female Hours")) +
-  scale_x_discrete(labels = 
-c("Population", "Age", "Income", "College", "White", "Hispanic", "Black", "Asian", "Extraction", "Construction", "Manufacturing", "Wholesale", "Logistics", "Financial", "Professional", "Education", "Service", "Information", "Retail", "Poverty", "Male Hours", "Female Hours")) +
+ggcorrplot(
+  correlation_matrix, 
+  ggtheme = ggplot2::theme_bw(),
+  legend.title = "Correlation"
+) + 
+  scale_y_discrete(labels = c(
+    "Population", "Age", "Income", "College", "White", "Hispanic", "Black", "Asian", "Extraction",
+    "Construction", "Manufacturing", "Wholesale", "Logistics", "Financial", "Professional", "Education", 
+    "Service", "Information", "Retail", "Poverty", "Male Hours", "Female Hours"
+  )) +
+  scale_x_discrete(labels = c(
+    "Population", "Age", "Income", "College", "White", "Hispanic", "Black", "Asian", "Extraction",
+    "Construction", "Manufacturing", "Wholesale", "Logistics", "Financial", "Professional", "Education", 
+    "Service", "Information", "Retail", "Poverty", "Male Hours", "Female Hours"
+  )) +
   theme(
     axis.text.y = element_text(size = 9),
     axis.text.x = element_text(angle = 60, size = 9)
@@ -254,7 +266,12 @@ c("Population", "Age", "Income", "College", "White", "Hispanic", "Black", "Asian
 indices <- which(abs(correlation_matrix) > 0.6 & correlation_matrix != 1, arr.ind = TRUE)
 
 # Initialize an empty data frame to store high correlation pairs
-correlation_table <- data.frame(Variable1 = character(), Variable2 = character(), Correlation = numeric(), stringsAsFactors = FALSE)
+correlation_table <- data.frame(
+  Variable1 = character(), 
+  Variable2 = character(), 
+  Correlation = numeric(), 
+  stringsAsFactors = FALSE
+)
 
 # Loop through indices to populate the correlation_table with correlated variable names and their correlation value
 for (i in 1:nrow(indices)) {
@@ -264,39 +281,47 @@ for (i in 1:nrow(indices)) {
   variable2 <- colnames(correlation_matrix)[col_index]
   correlation_value <- round(correlation_matrix[row_index, col_index], 2)
   
-  correlation_table <- rbind(correlation_table, cbind(Variable1 = variable1, Variable2 = variable2, Correlation = correlation_value))
+  correlation_table <- rbind(correlation_table, data.frame(
+    Variable1 = variable1, 
+    Variable2 = variable2, 
+    Correlation = correlation_value
+  ))
 }
 
 # Display the correlation table with significant correlations
 print(correlation_table)
 
 # Identify potentially redundant predictors with high correlation (above 0.9)
-caret::findCorrelation(correlation_matrix, cutoff = .9, names = T)
+high_corr_vars <- caret::findCorrelation(correlation_matrix, cutoff = .9, names = TRUE)
+print(high_corr_vars)
 
 # Check for linear combinations among the predictors, which could indicate redundancy
-caret::findLinearCombos(dplyr::select(acs_election_reduced, all_of(predictors)))
+linear_combos <- caret::findLinearCombos(dplyr::select(acs_election_reduced, all_of(predictors)))
+print(linear_combos)
 
 # Identify predictors with near-zero variance which might not contribute much to a predictive model
-caret::nearZeroVar(dplyr::select(acs_election_reduced, all_of(predictors)))
+nzv_predictors <- caret::nearZeroVar(dplyr::select(acs_election_reduced, all_of(predictors)))
+print(nzv_predictors)
+
 
 
 ```
 
 
 ```{r training and testing data set creation}
-# Splitting the dataset into training and testing sets excluding data from Georgia (GA) for the training set
-set.seed(117) # Ensure reproducibility
+# Set a seed for reproducibility
+set.seed(117)
 
-# Exclude Georgia from the training set
+# Exclude Georgia (GA) from the training set and keep it for testing
 acs_election_reduced_no_ga <- acs_election_reduced %>% filter(state_po != "GA")
 acs_election_reduced_ga <- acs_election_reduced %>% filter(state_po == "GA")
 
-# Create indices for training data
+# Create indices for training data by partitioning the data (85% for training)
 inTrain_ga <- createDataPartition(acs_election_reduced_no_ga$party, p = 0.85, list = FALSE)
 
-# Split the data into training and testing sets based on the indices
-party_train_ga <- acs_election_reduced_no_ga %>% dplyr::slice(as.vector(inTrain_ga))
-party_test_ga <- acs_election_reduced_no_ga %>% dplyr::slice(-as.vector(inTrain_ga))
+# Split the data into training and testing sets based on the created indices
+party_train_ga <- acs_election_reduced_no_ga %>% slice(as.vector(inTrain_ga))
+party_test_ga <- acs_election_reduced_no_ga %>% slice(-as.vector(inTrain_ga))
 
 # Combine the GA dataset with the test set
 party_test_ga <- bind_rows(acs_election_reduced_ga, party_test_ga)
@@ -305,6 +330,10 @@ party_test_ga <- bind_rows(acs_election_reduced_ga, party_test_ga)
 counties_with_missing_party <- party_train_ga %>%
   filter(is.na(party)) %>%
   select(NAME)
+
+# Display the counties with missing party information
+print(counties_with_missing_party)
+
 ```
 
 
@@ -322,56 +351,60 @@ my_rule <- "gini"
 my_min_nodes <- c(1:15)
 
 # Create a grid of tuning parameters for model training
-my_grid <- expand.grid(mtry = my_mtry,
-                       splitrule = my_rule,
-                       min.node.size = my_min_nodes)
+my_grid <- expand.grid(
+  mtry = my_mtry,
+  splitrule = my_rule,
+  min.node.size = my_min_nodes
+)
 
-# Train a random forest model using the 'ranger' method within the 'caret' package.
-# The model predicts 'party' based on various predictors related to demographics, economic sectors, and more.
-# 'Kappa' metric is chosen due to the unbalanced nature of the target variable.
-rf_party <- caret::train(party ~ 
-                                total_populationE +
-                                median_ageE +
-                                median_incomeE +
-                                pct_collegeE +
-                                pct_whiteE +
-                                pct_hispanicE +
-                                pct_blackE +
-                                pct_asianE +
-                                extraction_pct +
-                                construction_pct +
-                                manufacturing_pct +
-                                wholesale_trade_pct +
-                                retail_pct +
-                                logistics_pct +
-                                financial_pct +
-                                professional_pct +
-                                education_pct +
-                                service_pct +
-                                information_pct +
-                                poverty_pct +
-                                mean_hours_worked_maleE +
-                                mean_hours_worked_femaleE,
-                         data = party_train_ga,
-                         method = "ranger",
-                         metric = "Kappa",
-                         importance = "impurity", 
-                         trControl = trainControl(
-                           method = "cv", 
-                           number = 10, 
-                           classProbs = TRUE,
-                           verboseIter = TRUE),
-                         tuneGrid = my_grid
-                        )
+# Train a random forest model using the 'ranger' method within the 'caret' package
+# The model predicts 'party' based on various predictors related to demographics, economic sectors, and more
+# 'Kappa' metric is chosen due to the unbalanced nature of the target variable
+rf_party <- caret::train(
+  party ~ 
+    total_populationE +
+    median_ageE +
+    median_incomeE +
+    pct_collegeE +
+    pct_whiteE +
+    pct_hispanicE +
+    pct_blackE +
+    pct_asianE +
+    extraction_pct +
+    construction_pct +
+    manufacturing_pct +
+    wholesale_trade_pct +
+    retail_pct +
+    logistics_pct +
+    financial_pct +
+    professional_pct +
+    education_pct +
+    service_pct +
+    information_pct +
+    poverty_pct +
+    mean_hours_worked_maleE +
+    mean_hours_worked_femaleE,
+  data = party_train_ga,
+  method = "ranger",
+  metric = "Kappa",
+  importance = "impurity", 
+  trControl = trainControl(
+    method = "cv", 
+    number = 10, 
+    classProbs = TRUE,
+    verboseIter = TRUE
+  ),
+  tuneGrid = my_grid
+)
 
 # Display model results sorted by descending Kappa values
-rf_party$results |> arrange(desc(Kappa))
+rf_party$results %>% arrange(desc(Kappa))
 
 # Print the random forest model's details
-rf_party
+print(rf_party)
 
 # Print the best tuning parameters
-rf_party$bestTune
+print(rf_party$bestTune)
 
 # Extract variable importance without scaling
 rf_varimp <- caret::varImp(rf_party, scale = FALSE)
@@ -404,20 +437,27 @@ ggplot(imp_df, aes(y = reorder(RowName, Overall), x = Overall)) +
     x = "Scaled Importance",
     y = "Variable"
   ) +
-  scale_y_discrete(labels = c("Financial", "Female Hours", "Information", "Age", "Wholesale", "Retail", "Manufacturing", "Construction", "Education", "Logistics", "Service", "Income", "Hispanic", "Professional", "Poverty", "Extraction", "Male Hours", "Population", "Asian", "Black", "White", "College"))+
+  scale_y_discrete(labels = c(
+    "Financial", "Female Hours", "Information", "Age", "Wholesale", "Retail", 
+    "Manufacturing", "Construction", "Education", "Logistics", "Service", "Income", 
+    "Hispanic", "Professional", "Poverty", "Extraction", "Male Hours", "Population", 
+    "Asian", "Black", "White", "College"
+  )) +
   theme_bw() +
   theme(axis.text.x = element_text(hjust = 1))
+
 
 ```
 
 
 ```{r model performance}
+
 # Calculate the confusion matrix to evaluate the model performance
 confusion_matrix_rf <- confusionMatrix(data = rf_party_pred, reference = party_test_ga$party)
 print(confusion_matrix_rf)
 
 # Extract and display the Kappa statistic from the confusion matrix
-# Kappa is a statistic that measures inter-rater agreement for categorical items. It is more robust than simple percent agreement calculation since it takes into account the agreement occurring by chance.
+# Kappa measures inter-rater agreement for categorical items, accounting for chance agreement.
 kappa_statistic_rf <- confusion_matrix_rf$overall["Kappa"]
 print(kappa_statistic_rf)
 
@@ -431,18 +471,19 @@ print(accuracy_rf)
 predictions1 <- ROCR::prediction(rf_party_pred_prob[,1], party_test_ga$party)
 roc1 <- ROCR::performance(predictions1, "tpr", "fpr")
 plot(roc1)
+
 # Extract the True Positive Rate (TPR) and False Positive Rate (FPR) for plotting
 df.roc1 <- data.frame(fpr = as.vector(unlist(roc1@x.values)), tpr = as.vector(unlist(roc1@y.values)))
 
 # Calculate and display the Area Under the Curve (AUC) for the ROC
 # AUC represents the measure of the ability of the classifier to distinguish between classes.
 auc1 <- ROCR::performance(predictions1, measure = "auc")
-auc_rf <- auc1@y.values %>% unlist() |> round(2)
+auc_rf <- auc1@y.values %>% unlist() %>% round(2)
 print(auc_rf)
 
 # Calculate and plot the Precision-Recall curve
-# Precision-Recall curve shows the tradeoff between precision and recall for different threshold.
-prec1 = performance(predictions1, "prec", "rec")
+# Precision-Recall curve shows the tradeoff between precision and recall for different thresholds.
+prec1 <- ROCR::performance(predictions1, "prec", "rec")
 plot(prec1)
 
 # Plotting ROC curve using ggplot2
@@ -457,189 +498,187 @@ ggplot() +
   geom_text(aes(x = .75, y = .27, label = paste("Model AUC:", auc_rf)), color = "red", size = 12) +
   theme_bw()
 
+
 ```
 
 
 ```{r partial dependence plots}
+
 # Set custom colors for political parties
 custom_party_colors <- c("DEMOCRAT" = "blue", "REPUBLICAN" = "red")
 
 # Prepare data for PDP: Percentage of population with college education
 xs_college <- data.frame(pct_collegeE = seq(0, 100, 1))
 # Create PDP for the effect of college education on party affiliation
-pdp.college = pdp::partial(rf_party, pred.var = "pct_collegeE", train = party_train_ga,
-                           pred.grid = xs_college, prob = TRUE) # Use TRUE for clarity
+pdp_college <- pdp::partial(
+  rf_party, 
+  pred.var = "pct_collegeE", 
+  train = party_train_ga,
+  pred.grid = xs_college, 
+  prob = TRUE  # Use TRUE to get probability predictions
+)
 # Display the PDP for college education
-pdp.college
+print(pdp_college)
 
 # Prepare data for PDP: Percentage of white population
 xs_white <- data.frame(pct_whiteE = seq(0, 100, 1))
 # Create PDP for the effect of white population percentage on party affiliation
-pdp_white <- pdp::partial(rf_party, pred.var = "pct_whiteE", train = party_train_ga,
-                          pred.grid = xs_white, prob = TRUE)
+pdp_white <- pdp::partial(
+  rf_party, 
+  pred.var = "pct_whiteE", 
+  train = party_train_ga,
+  pred.grid = xs_white, 
+  prob = TRUE
+)
 # Display the PDP for white population percentage
-pdp_white
+print(pdp_white)
 
 # Prepare data for PDP: Percentage of black population
 xs_black <- data.frame(pct_blackE = seq(0, 100, 1))
 # Create PDP for the effect of black population percentage on party affiliation
-pdp_black <- pdp::partial(rf_party, pred.var = "pct_blackE", train = party_train_ga,
-                          pred.grid = xs_black, prob = TRUE)
+pdp_black <- pdp::partial(
+  rf_party, 
+  pred.var = "pct_blackE", 
+  train = party_train_ga,
+  pred.grid = xs_black, 
+  prob = TRUE
+)
 # Display the PDP for black population percentage
-pdp_black
+print(pdp_black)
 
 # Prepare data for PDP: Percentage of Asian population
 xs_asian <- data.frame(pct_asianE = seq(0, 100, 1))
 # Create PDP for the effect of Asian population percentage on party affiliation
-pdp_asian <- pdp::partial(rf_party, pred.var = "pct_asianE", train = party_train_ga,
-                          pred.grid = xs_asian, prob = TRUE)
+pdp_asian <- pdp::partial(
+  rf_party, 
+  pred.var = "pct_asianE", 
+  train = party_train_ga,
+  pred.grid = xs_asian, 
+  prob = TRUE
+)
 # Display the PDP for Asian population percentage
-pdp_asian
+print(pdp_asian)
 
 # Prepare data for PDP: Total population
 xs_population <- data.frame(total_populationE = seq(1000, 10000000, 10000))
 # Create PDP for the effect of total population on party affiliation
-pdp_population <- pdp::partial(rf_party, pred.var = "total_populationE", train = party_train_ga,
-                               pred.grid = xs_population, prob = TRUE)
+pdp_population <- pdp::partial(
+  rf_party, 
+  pred.var = "total_populationE", 
+  train = party_train_ga,
+  pred.grid = xs_population, 
+  prob = TRUE
+)
 # Display the PDP for total population
-pdp_population
+print(pdp_population)
 
 # Analysis of reduced population dataset
 reduced_population <- acs_election_reduced %>%
   filter(total_populationE < 1000000)
 # Display summary statistics for total population in the reduced dataset
-summary(reduced_population$total_populationE)
+print(summary(reduced_population$total_populationE))
 
 # Prepare data for PDP: Mean hours worked by male
 xs_hours <- data.frame(mean_hours_worked_maleE = seq(0, 100, 1))
 # Create PDP for the effect of mean hours worked by male on party affiliation
-pdp_hours <- pdp::partial(rf_party, pred.var = "mean_hours_worked_maleE", train = party_train_ga,
-                          pred.grid = xs_hours, prob = TRUE)
+pdp_hours <- pdp::partial(
+  rf_party, 
+  pred.var = "mean_hours_worked_maleE", 
+  train = party_train_ga,
+  pred.grid = xs_hours, 
+  prob = TRUE
+)
 # Display the PDP for mean hours worked by male
-pdp_hours
+print(pdp_hours)
+
 
 ```
 
 
 ```{r Creating ggplots of pdps}
-# Creating a plot for the relationship between percent college-educated and modeled outcomes
-college.plot <- ggplot() +
-  geom_line(data = pdp.college, aes(pct_collegeE, yhat), color = "black") +  # Drawing the line
-  geom_rug(data = acs_election_reduced, aes(pct_collegeE, color = party), sides = "b", alpha = 0.5) +  # Adding a rug plot for additional data visualization
-  scale_x_continuous(labels = scales::comma, breaks = seq(0, 80, by = 10)) +  # Customizing the x-axis
-  coord_cartesian(xlim = c(0, 80)) +  # Setting x-axis limits
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Customizing the y-axis
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Defining custom colors for political parties
-  labs(color = "Party", x = "Percent with a Degree") +  # Adding labels
-  theme_bw() +  # Using a theme with a white background
-  theme(axis.title.y = element_blank(),  # Customizing theme elements
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
+# Define a function to create PDP plots
+create_pdp_plot <- function(pdp_data, predictor, x_label, x_breaks, x_limits = NULL, y_limits = c(0.35, 0.90), custom_party_colors) {
+  ggplot() +
+    geom_line(data = pdp_data, aes_string(x = predictor, y = "yhat"), color = "black") +
+    geom_rug(data = acs_election_reduced, aes_string(x = predictor, color = "party"), sides = "b", alpha = 0.5) +
+    scale_x_continuous(breaks = x_breaks, limits = x_limits) +
+    scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = y_limits, labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
+    scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +
+    labs(color = "Party", x = x_label) +
+    theme_bw() +
+    theme(
+      axis.title.y = element_blank(),
+      axis.title.x = element_text(size = 20),
+      axis.text = element_text(size = 20),
+      legend.text = element_text(size = 20),
+      legend.title = element_text(size = 20)
+    )
+}
 
+# Custom colors for political parties
+custom_party_colors <- c("DEMOCRAT" = "blue", "REPUBLICAN" = "red")
 
-# Plotting percent white population against modeled outcomes
-white.plot <- ggplot() +
-  geom_line(data = pdp_white, aes(pct_whiteE, yhat), color = "black") +  # Line plot
-  geom_rug(data = acs_election_reduced, aes(pct_whiteE, color = party), sides = "b", alpha = 0.5) +  # Rug plot for data visualization
-  scale_x_continuous(breaks = seq(0, 100, by = 10)) +  # X-axis customization
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Y-axis customization
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Party color definition
-  labs(color = "Party", x = "Percent White") +  # Labeling
-  theme_bw() +  # Theme with a white background
-  theme(axis.title.y = element_blank(),  # Theme customization
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
+# Creating plots using the function
+college_plot <- create_pdp_plot(
+  pdp_data = pdp_college, 
+  predictor = "pct_collegeE", 
+  x_label = "Percent with a Degree", 
+  x_breaks = seq(0, 80, by = 10), 
+  x_limits = c(0, 80), 
+  custom_party_colors = custom_party_colors
+)
 
+white_plot <- create_pdp_plot(
+  pdp_data = pdp_white, 
+  predictor = "pct_whiteE", 
+  x_label = "Percent White", 
+  x_breaks = seq(0, 100, by = 10), 
+  custom_party_colors = custom_party_colors
+)
 
-# Plot for percent black population and modeled outcomes
-black.plot <- ggplot() +
-  geom_line(data = pdp_black, aes(pct_blackE, yhat), color = "black") +  # Line plot
-  geom_rug(data = acs_election_reduced, aes(pct_blackE, color = party), sides = "b", alpha = 0.5) +  # Rug plot for visualization
-  scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0,90)) +  # X-axis limits and breaks
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Y-axis customization
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Party colors
-  labs(color = "Party", x = "Percent Black") +  # Labels
-  theme_bw() +  # White background theme
-  theme(axis.title.y = element_blank(),  # Theme adjustments
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
+black_plot <- create_pdp_plot(
+  pdp_data = pdp_black, 
+  predictor = "pct_blackE", 
+  x_label = "Percent Black", 
+  x_breaks = seq(0, 100, by = 10), 
+  x_limits = c(0, 90), 
+  custom_party_colors = custom_party_colors
+)
 
+asian_plot <- create_pdp_plot(
+  pdp_data = pdp_asian, 
+  predictor = "pct_asianE", 
+  x_label = "Percent Asian", 
+  x_breaks = seq(0, 45, by = 5), 
+  x_limits = c(0, 45), 
+  custom_party_colors = custom_party_colors
+)
 
-# Plot for percent black population and modeled outcomes
-black.plot <- ggplot() +
-  geom_line(data = pdp_black, aes(pct_blackE, yhat), color = "black") +  # Line plot
-  geom_rug(data = acs_election_reduced, aes(pct_blackE, color = party), sides = "b", alpha = 0.5) +  # Rug plot for visualization
-  scale_x_continuous(breaks = seq(0, 100, by = 10), limits = c(0,90)) +  # X-axis limits and breaks
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Y-axis customization
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Party colors
-  labs(color = "Party", x = "Percent Black") +  # Labels
-  theme_bw() +  # White background theme
-  theme(axis.title.y = element_blank(),  # Theme adjustments
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
+population_plot <- create_pdp_plot(
+  pdp_data = pdp_population, 
+  predictor = "total_populationE", 
+  x_label = "Total Population by 100,000", 
+  x_breaks = seq(0, 1000000, by = 100000), 
+  x_limits = c(0, 1000000), 
+  custom_party_colors = custom_party_colors
+)
 
-# Plot for percent Asian population vs. modeled outcomes
-asian.plot <- ggplot() +
-  geom_line(data = pdp_asian, aes(pct_asianE, yhat), color = "black") +  # Line plot
-  geom_rug(data = acs_election_reduced, aes(pct_asianE, color = party), sides = "b", alpha = 0.5) +  # Rug plot for data points
-  scale_x_continuous(breaks = seq(0, 45, by = 5)) +  # X-axis breaks
-  coord_cartesian(xlim = c(0, 45)) +  # X-axis limits
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Y-axis customization
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Manual color scale for parties
-  labs(color = "Party", x = "Percent Asian") +  # Labeling
-  theme_bw() +  # White background theme
-  theme(axis.title.y = element_blank(),  # Theme customization
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
+hours_plot <- create_pdp_plot(
+  pdp_data = pdp_hours, 
+  predictor = "mean_hours_worked_maleE", 
+  x_label = "Mean Male Work Hours", 
+  x_breaks = seq(30, 65, by = 5), 
+  custom_party_colors = custom_party_colors
+)
 
+# Print the plots
+print(college_plot)
+print(white_plot)
+print(black_plot)
+print(asian_plot)
+print(population_plot)
+print(hours_plot)
 
-# Plotting total population by 100,000 units against modeled outcomes
-population.plot <- ggplot() +
-  geom_line(data = pdp_population, aes(total_populationE, yhat), color = "black") +  # Line plot
-  geom_rug(data = acs_election_reduced, aes(total_populationE, color = party), sides = "b", alpha = 0.5) +  # Rug plot for visualization
-  scale_x_continuous(breaks = seq(0, 1000000, by = 100000), labels = c("0", "1", "2", "3", "4", "5", "6", "7" ,"8", "9", "10")) +  # X-axis customization
-  coord_cartesian(xlim = c(0, 1000000)) +  # Setting x-axis limits
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Y-axis customization
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Defining party colors
-  labs(color = "Party", x = "Total Population by 100,000") +  # Labeling
-  theme_bw() +  # Using a theme with a white background
-  theme(axis.title.y = element_blank(),  # Customizing theme elements
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
-
-# Plot for mean male work hours and modeled outcomes
-hours.plot <- ggplot() +
-  geom_line(data = pdp_hours, aes(mean_hours_worked_maleE, yhat), color = "black") +  # Line plot
-  geom_rug(data = acs_election_reduced, aes(mean_hours_worked_maleE, color = party), sides = "b", alpha = 0.5) +  # Rug plot for data points
-  scale_x_continuous(breaks = seq(30, 65, by = 5)) +  # X-axis breaks and limits
-  scale_y_continuous(breaks = seq(.35, .90, by = .05), limits = c(0.35, 0.90),  # Y-axis customization
-                     labels = function(x) sub("^0", "", sprintf("%.2f", x))) +
-  scale_color_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +  # Manual color scale for political parties
-  labs(color = "Party", x = "Mean Male Work Hours") +  # Labeling
-  theme_bw() +  # Theme with a white background
-  theme(axis.title.y = element_blank(),  # Customizing theme elements
-        axis.title.x = element_text(size = 20),
-        axis.text = element_text(size = 20),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size = 20))
 
 ```
 
@@ -647,38 +686,41 @@ hours.plot <- ggplot() +
 ```{r combining plots}
 # Create a main plot by combining multiple sub-plots and arranging them
 # The sub-plots are combined using arithmetic operations and then arranged using plot_layout and plot_annotation
-pdps.poster <- (white.plot | black.plot | asian.plot) / 
-               (college.plot | population.plot | hours.plot) + 
+pdps_poster <- (white_plot | black_plot | asian_plot) / 
+               (college_plot | population_plot | hours_plot) + 
                plot_layout(guides = 'collect') +  # Collects and displays all guides in a single area
                plot_annotation(tag_levels = "A", 
                                title = "Figure 3. Probability of Voting Republican by Important Variables") &
-               theme(plot.tag = element_text(size = 25),  # Customize tag styling
-                     plot.title = element_text(size = 25),  # Customize title styling
-                     legend.position = 'bottom',  # Position legend at bottom
-                     legend.box.spacing = unit(0.1, 'cm'),  # Adjusts spacing between legend boxes
-                     legend.box.margin = margin(1,1,1,1, 'pt'))  # Adjusts margin around the legend box
+               theme(
+                 plot.tag = element_text(size = 25),  # Customize tag styling
+                 plot.title = element_text(size = 25),  # Customize title styling
+                 legend.position = 'bottom',  # Position legend at bottom
+                 legend.box.spacing = unit(0.1, 'cm'),  # Adjusts spacing between legend boxes
+                 legend.box.margin = margin(1, 1, 1, 1, 'pt')  # Adjusts margin around the legend box
+               )
 
 # Display the main plot (optional, useful for interactive sessions)
-pdps.poster 
+pdps_poster 
 
 # Create a label plot with ggplot
-label <- ggplot() +
-         geom_text(aes(x = 0, y = .5, label = "Probability of Voting Republican", angle = 90), size = 10) +
-         theme_void()  # Use a blank theme
+label_plot <- ggplot() +
+              geom_text(aes(x = 0, y = .5, label = "Probability of Voting Republican", angle = 90), size = 10) +
+              theme_void()  # Use a blank theme
 
 # Combine the label plot with the main plot using plot_grid from the patchwork package
 # This creates a final plot with a label on the side
-plots.with.label <- plot_grid(
-  label, pdps.poster,
+plots_with_label <- plot_grid(
+  label_plot, pdps_poster,
   ncol = 2,
   rel_widths = c(0.03, 1)  # Adjust the relative widths to control spacing between label and main plot
 )
 
 # Display the combined plot with label (optional, useful for interactive sessions)
-plots.with.label
+plots_with_label
 
 # Save the final plot as a TIFF image with specified dimensions and settings
-ggsave("PDP.3.13.24.tiff", plot = plots.with.label, width = 575, height = 250, units = "mm", limitsize = FALSE)
+ggsave("PDP_3_13_24.tiff", plot = plots_with_label, width = 575, height = 250, units = "mm", limitsize = FALSE)
+
 
 ```
 
@@ -687,12 +729,12 @@ ggsave("PDP.3.13.24.tiff", plot = plots.with.label, width = 575, height = 250, u
 # Define custom colors for political parties
 custom_party_colors <- c("DEMOCRAT" = "blue", "REPUBLICAN" = "red")
 
-# Filter Georgia counties from a dataset
+# Filter Georgia counties from the dataset
 georgia_counties <- acs_election_reduced %>%
   filter(state_po == "GA")
 
 # Visualize Georgia counties by party using custom colors and remove legends
-georgia_counties |>
+georgia_map <- georgia_counties %>%
   ggplot() +
   geom_sf(aes(geometry = geometry, fill = party)) +
   scale_fill_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +
@@ -708,7 +750,6 @@ party_test_county_ga <- party_test_county %>%
 mismatched_counties <- party_test_county_ga %>%
   filter(rf_party_pred != party)
 
-# Print the results based on mismatch condition
 if (nrow(mismatched_counties) > 0) {
   cat("Mismatched counties:\n")
   print(mismatched_counties)
@@ -717,7 +758,7 @@ if (nrow(mismatched_counties) > 0) {
 }
 
 # Further processing on mismatched counties for a detailed view, rounding probabilities
-mismatched_counties |>
+mismatched_counties %>%
   select(rf_party_pred, party, REPUBLICAN, DEMOCRAT, NAME) %>%
   mutate(REPUBLICAN = round(REPUBLICAN, 2),
          DEMOCRAT = round(DEMOCRAT, 2)) %>%
@@ -726,44 +767,47 @@ mismatched_counties |>
   print()
 
 # Visualize actual political affiliations for Georgia counties
-actual.plot <- party_test_county_ga |>
+actual_plot <- party_test_county_ga %>%
   ggplot() +
   geom_sf(aes(geometry = geometry, fill = party)) +
   scale_fill_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +
   labs(fill = "Political Party") +
-  theme_void() +
-  theme()
+  theme_void()
 
 # Visualize predicted political affiliations for Georgia counties
-predicted.plot <- party_test_county_ga |>
+predicted_plot <- party_test_county_ga %>%
   ggplot() +
   geom_sf(aes(geometry = geometry, fill = rf_party_pred)) +
   scale_fill_manual(values = custom_party_colors, labels = c("Republican", "Democrat")) +
   labs(fill = "Political Party") +
-  theme_void() +
-  theme()
+  theme_void()
 
 # Output the plots
-actual.plot
-predicted.plot
-
+print(actual_plot)
+print(predicted_plot)
 
 # Combine plots with patchwork syntax
-poster.map <- (actual.plot / predicted.plot) + 
+poster_map <- (actual_plot / predicted_plot) + 
   plot_layout(guides = 'collect') +
-  plot_annotation(tag_levels = "A", title = "Figure 4. Map of the 2020 Presidential Election Showing Election Results (A) and Predicted Results (B)") +
-  theme(plot.tag = element_text(size = 25),
-        plot.title = element_text(size = 25),
-        legend.box.spacing = unit(0.1, 'cm'), # Adjusts spacing between legend boxes
-        legend.box.margin = margin(1,1,1,1, 'pt'),
-        legend.text = element_text(size = 25),
-        legend.title = element_text(size = 25))
+  plot_annotation(
+    tag_levels = "A", 
+    title = "Figure 4. Map of the 2020 Presidential Election Showing Election Results (A) and Predicted Results (B)"
+  ) &
+  theme(
+    plot.tag = element_text(size = 25),
+    plot.title = element_text(size = 25),
+    legend.box.spacing = unit(0.1, 'cm'),
+    legend.box.margin = margin(1, 1, 1, 1, 'pt'),
+    legend.text = element_text(size = 25),
+    legend.title = element_text(size = 25)
+  )
 
 # Display the combined plot
-print(poster.map)
+print(poster_map)
 
 # Save the combined plot as a TIFF file with specified dimensions
-ggsave("Map.3.14.24.tiff", plot = poster.map, width = 575, height = 250, units = "mm", limitsize = FALSE)
+ggsave("poster_map.tiff", plot = poster_map, width = 575, height = 250, units = "mm", limitsize = FALSE)
+
 
 ```
 
